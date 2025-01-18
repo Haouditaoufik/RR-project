@@ -1,0 +1,68 @@
+function [theta_real1, theta_real2, cost] = simulateRobotPoint(params, Tsim, dt, theta_desired1, theta_desired2, l1, l2, m1, m2, g, fis, returnCost)
+    % Paramètres du FOPID
+    Kp1 = params(1); Ki1 = params(2); Kd1 = params(3); % Gains pour theta1
+    Kp2 = params(4); Ki2 = params(5); Kd2 = params(6); % Gains pour theta2
+
+    % Initialisation des variables
+    time = 0:dt:Tsim;
+    theta_real1 = zeros(size(time));
+    theta_real2 = zeros(size(time));
+    dtheta_real1 = zeros(size(time));
+    dtheta_real2 = zeros(size(time));
+    error_sum1 = 0; error_sum2 = 0;
+    prev_error1 = 0; prev_error2 = 0;
+
+    % Simulation
+    for t = 1:length(time) - 1
+        % Erreurs
+        error1 = theta_desired1(t) - theta_real1(t);
+        error2 = theta_desired2(t) - theta_real2(t);
+        error_sum1 = error_sum1 + error1 * dt;
+        error_sum2 = error_sum2 + error2 * dt;
+        d_error1 = (error1 - prev_error1) / dt;
+        d_error2 = (error2 - prev_error2) / dt;
+
+        % Ajustement dynamique des gains avec la logique floue
+        gains1 = evalfis(fis, [error1, d_error1]); % Ajuste Kp1, Ki1, Kd1
+        gains2 = evalfis(fis, [error2, d_error2]); % Ajuste Kp2, Ki2, Kd2
+        Kp1 = gains1(1); Ki1 = gains1(2); Kd1 = gains1(3);
+        Kp2 = gains2(1); Ki2 = gains2(2); Kd2 = gains2(3);
+
+        % Calcul du couple de contrôle FOPID
+        tau1 = Kp1 * error1 + Ki1 * error_sum1 + Kd1 * d_error1;
+        tau2 = Kp2 * error2 + Ki2 * error_sum2 + Kd2 * d_error2;
+
+        % Modèle dynamique
+        theta = [theta_real1(t); theta_real2(t)];
+        dtheta = [dtheta_real1(t); dtheta_real2(t)];
+        m11 = m1 * lc1^2 + m2 * (l1^2 + lc2^2 + 2 * l1 * lc2 * cos(theta(2))) + I1 + I2;
+        m12 = m2 * (lc2^2 + l1 * lc2 * cos(theta(2))) + I2;
+        m22 = m2 * lc2^2 + I2;
+        M = [m11, m12; m12, m22];
+        c12 = -m2 * l1 * lc2 * sin(theta(2)) * dtheta(2);
+        C = [0, c12; -c12, 0];
+        G = [(m1 * lc1 + m2 * l1) * g * cos(theta(1)) + m2 * lc2 * g * cos(theta(1) + theta(2));
+             m2 * lc2 * g * cos(theta(1) + theta(2))];
+        tau = [tau1; tau2];
+        ddtheta = M \ (tau - C * dtheta - G);
+
+        % Mise à jour des angles et vitesses
+        dtheta_real1(t + 1) = dtheta_real1(t) + ddtheta(1) * dt;
+        dtheta_real2(t + 1) = dtheta_real2(t) + ddtheta(2) * dt;
+        theta_real1(t + 1) = theta_real1(t) + dtheta_real1(t + 1) * dt;
+        theta_real2(t + 1) = theta_real2(t) + dtheta_real2(t + 1) * dt;
+
+        % Mise à jour des erreurs précédentes
+        prev_error1 = error1;
+        prev_error2 = error2;
+    end
+
+    % Calcul de l'erreur quadratique moyenne
+    cost = mean((theta_desired1 - theta_real1).^2 + (theta_desired2 - theta_real2).^2);
+
+    % Retourner uniquement le coût si demandé
+    if nargin > 11 && returnCost
+        theta_real1 = cost;
+        theta_real2 = [];
+    end
+end
